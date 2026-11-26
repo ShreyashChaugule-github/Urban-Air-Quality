@@ -11,6 +11,7 @@ Clear Air is a household-focused assistant for navigating winter smog and urban 
 - [What it does](#what-it-does)
 - [Technology](#technology)
 - [Getting started](#getting-started)
+- [Docker](#docker)
 - [Firebase authentication](#firebase-authentication)
 - [AI assistant](#ai-assistant)
 - [Privacy and safety](#privacy-and-safety)
@@ -49,6 +50,27 @@ npm run dev
 ```
 
 Open [http://127.0.0.1:4173](http://127.0.0.1:4173). The planner, offline assistant, and event directory work without Firebase or an AI provider key. Restart the Next.js process after editing environment variables.
+
+## Docker
+
+Docker Desktop (or another Docker Engine with Compose v2) is required. Create `.env.local` from `.env.example`, then use Compose to build and start the production container:
+
+```sh
+cp .env.example .env.local
+# Edit .env.local with your configuration.
+docker compose --env-file .env.local up --build -d
+```
+
+Open [http://127.0.0.1:4173](http://127.0.0.1:4173). View logs or stop the service with:
+
+```sh
+docker compose logs -f clear-air
+docker compose down
+```
+
+The multi-stage `Dockerfile` builds Next.js in standalone mode and runs it as a non-root user on port `4173`. `.dockerignore` keeps Git metadata, local environment files, dependencies, and build output out of the build context. Firebase `NEXT_PUBLIC_*` settings are supplied as build arguments because Next.js embeds public client configuration in the browser bundle; rebuild the image after changing those values. `AI_API_KEY` is provided only to the running container through `.env.local`, not as a Docker build argument.
+
+To build without Compose, pass the Firebase `NEXT_PUBLIC_*` settings from your shell as `--build-arg` values to `docker build -f Dockerfile -t urban-air-quality:latest .`, then start the image with the runtime environment variables and `-p 4173:4173`.
 
 ## Firebase authentication
 

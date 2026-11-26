@@ -77,6 +77,57 @@ function cleanPlan(value) {
   };
 }
 
+function getProvider() {
+  const configuredModel = process.env.AI_MODEL?.trim();
+  const provider = (process.env.AI_PROVIDER || (configuredModel?.startsWith("gemini") ? "gemini" : "openai")).toLowerCase();
+  const model = configuredModel === "gemini"
+    ? "gemini-2.5-flash"
+    : configuredModel || (provider === "gemini" ? "gemini-2.5-flash" : "gpt-4o-mini");
+  if (!new Set(["gemini", "openai"]).has(provider)) throw new Error("Unsupported AI provider");
+  return { provider, model };
+}
+
+async function requestGemini({ apiKey, model, input, userContent }) {
+  const contents = [
+    ...input.history.map(message => ({ role: message.role === "assistant" ? "model" : "user", parts: [{ text: message.content }] })),
+    { role: "user", parts: [{ text: userContent }] }
+  ];
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      contents,
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: input.action === "plan" ? 1100 : 350,
+        ...(input.action === "plan" ? { responseMimeType: "application/json" } : {})
+      }
+    }),
+    signal: AbortSignal.timeout(20_000)
+  });
+  if (!response.ok) return { ok: false };
+  const result = await response.json();
+  const content = result?.candidates?.[0]?.content?.parts
+    ?.map(part => part.text)
+    .filter(text => typeof text === "string")
+    .join("\n");
+  return { ok: true, content };
+}
+
+async function requestOpenAI({ apiKey, model, input, userContent }) {
+  const messages = [{ role: "system", content: systemPrompt }, ...input.history, { role: "user", content: userContent }];
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+    body: JSON.stringify({ model, temperature: 0.3, max_tokens: input.action === "plan" ? 1100 : 350, messages, ...(input.action === "plan" ? { response_format: { type: "json_object" } } : {}) }),
+    signal: AbortSignal.timeout(20_000)
+  });
+  if (!response.ok) return { ok: false };
+  const result = await response.json();
+  return { ok: true, content: result?.choices?.[0]?.message?.content };
+}
+
 export async function POST(request) {
   const origin = request.headers.get("origin");
   if (origin) {
@@ -99,19 +150,15 @@ export async function POST(request) {
     const input = normalizeInput(await readJson(request));
     const apiKey = process.env.AI_API_KEY;
     if (!apiKey) return json(503, { error: "AI is not configured. Showing the offline plan instead." });
+    const { provider, model } = getProvider();
     const userContent = input.action === "plan"
       ? `Create a household plan for this profile: ${JSON.stringify(input.profile)}. Return only JSON with summary and sections. Use the section titles Daily routine, Indoor air, Sustainable swaps, and Community. Give 1-3 practical items per relevant section; each item has action, why, and impact. Keep impacts qualitative unless a well-supported number and its conditions are known.`
       : `Household profile: ${JSON.stringify(input.profile)}\nQuestion: ${input.question}\nAnswer in under 140 words.`;
-    const messages = [{ role: "system", content: systemPrompt }, ...(input.action === "ask" ? input.history : []), { role: "user", content: userContent }];
-    const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
-      body: JSON.stringify({ model: process.env.AI_MODEL || "gpt-4o-mini", temperature: 0.3, max_tokens: input.action === "plan" ? 1100 : 350, messages, ...(input.action === "plan" ? { response_format: { type: "json_object" } } : {}) }),
-      signal: AbortSignal.timeout(20_000)
-    });
-    if (!upstream.ok) return json(502, { error: "The AI service is temporarily unavailable." });
-    const result = await upstream.json();
-    const content = result?.choices?.[0]?.message?.content;
+    const result = provider === "gemini"
+      ? await requestGemini({ apiKey, model, input, userContent })
+      : await requestOpenAI({ apiKey, model, input, userContent });
+    if (!result.ok) return json(502, { error: "The AI service is temporarily unavailable." });
+    const content = result.content;
     if (typeof content !== "string" || !content.trim()) return json(502, { error: "The AI returned an empty response." });
     if (input.action === "plan") {
       try {

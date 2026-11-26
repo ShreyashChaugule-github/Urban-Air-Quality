@@ -83,14 +83,17 @@ The app implements email/password account creation, sign-in, password reset, ses
 
 ## AI assistant
 
-To enable AI plan generation and chat, set a server-side provider key in `.env.local`:
+To enable Gemini plan generation and chat, set these server-side values in `.env.local`:
 
 ```dotenv
-AI_API_KEY=your-server-side-provider-key
-AI_MODEL=gpt-4o-mini
+AI_PROVIDER=gemini
+AI_API_KEY=your-google-ai-studio-key
+AI_MODEL=gemini-2.5-flash
 ```
 
-`AI_API_KEY` is read only by the server route and must never be exposed with a `NEXT_PUBLIC_` prefix. `AI_MODEL` is optional and defaults to `gpt-4o-mini`. The route validates and bounds request data, keeps safety policy in a system message, applies request limits, and returns a rule-based client fallback when AI is not configured or available.
+The server calls Google's Gemini `generateContent` API. `AI_API_KEY` is sent in the server-to-server `x-goog-api-key` header and is never included in the browser bundle or URL. Never expose it with a `NEXT_PUBLIC_` prefix. `AI_MODEL` defaults to `gemini-2.5-flash` when Gemini is selected. The route also supports OpenAI Chat Completions by setting `AI_PROVIDER=openai` and choosing an OpenAI model such as `gpt-4o-mini`.
+
+The route validates and bounds request data, keeps safety policy in a system instruction/message, applies request limits, and returns a rule-based client fallback when AI is not configured or available. Keep provider keys in `.env.local` or your deployment secret manager; do not put real keys in `.env.example` or commit them.
 
 ## Privacy and safety
 
@@ -131,4 +134,4 @@ Development and production output use separate directories (`.next-dev` and `.ne
 
 ## Deployment
 
-Deploy with a Node.js-compatible Next.js host. Configure the Firebase Web app values and server-only `AI_API_KEY` in the host's environment settings, add the production hostname to Firebase Authorized domains, and run `npm run build` followed by `npm start` (or use the host's supported Next.js runtime). Do not upload `.env.local`, `node_modules`, or `.next*` build output to source control.
+Deploy with a Node.js-compatible Next.js host. Configure the Firebase Web app values plus `AI_PROVIDER`, `AI_MODEL`, and server-only `AI_API_KEY` in the host's environment settings, add the production hostname to Firebase Authorized domains, and run `npm run build` followed by `npm start` (or use the host's supported Next.js runtime). Do not upload `.env.local`, `node_modules`, or `.next*` build output to source control.

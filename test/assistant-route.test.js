@@ -31,9 +31,13 @@ test("rejects cross-origin calls before contacting the provider", async () => {
 
 test("sends safety policy as a system message and returns a bounded plan", async () => {
   const previousKey = process.env.AI_API_KEY;
+  const previousProvider = process.env.AI_PROVIDER;
+  const previousModel = process.env.AI_MODEL;
   const previousFetch = globalThis.fetch;
   let sent;
   process.env.AI_API_KEY = "test-key";
+  process.env.AI_PROVIDER = "openai";
+  process.env.AI_MODEL = "gpt-4o-mini";
   globalThis.fetch = async (_url, options) => {
     sent = JSON.parse(options.body);
     return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ summary: "A practical plan", sections: [{ title: "Indoor air", items: [{ action: "Use a cleaner room", why: "Reduce indoor sources", impact: "Can help reduce exposure" }] }] }) } }] }), { status: 200 });
@@ -51,14 +55,22 @@ test("sends safety policy as a system message and returns a bounded plan", async
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.AI_API_KEY;
     else process.env.AI_API_KEY = previousKey;
+    if (previousProvider === undefined) delete process.env.AI_PROVIDER;
+    else process.env.AI_PROVIDER = previousProvider;
+    if (previousModel === undefined) delete process.env.AI_MODEL;
+    else process.env.AI_MODEL = previousModel;
   }
 });
 
 test("keeps chat policy separate and accepts bounded follow-up context", async () => {
   const previousKey = process.env.AI_API_KEY;
+  const previousProvider = process.env.AI_PROVIDER;
+  const previousModel = process.env.AI_MODEL;
   const previousFetch = globalThis.fetch;
   let sent;
   process.env.AI_API_KEY = "test-key";
+  process.env.AI_PROVIDER = "openai";
+  process.env.AI_MODEL = "gpt-4o-mini";
   globalThis.fetch = async (_url, options) => {
     sent = JSON.parse(options.body);
     return new Response(JSON.stringify({ choices: [{ message: { content: "Keep one room cleaner." } }] }), { status: 200 });
@@ -71,5 +83,78 @@ test("keeps chat policy separate and accepts bounded follow-up context", async (
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.AI_API_KEY;
     else process.env.AI_API_KEY = previousKey;
+    if (previousProvider === undefined) delete process.env.AI_PROVIDER;
+    else process.env.AI_PROVIDER = previousProvider;
+    if (previousModel === undefined) delete process.env.AI_MODEL;
+    else process.env.AI_MODEL = previousModel;
+  }
+});
+
+test("uses Gemini JSON mode and returns a normalized plan", async () => {
+  const previousKey = process.env.AI_API_KEY;
+  const previousProvider = process.env.AI_PROVIDER;
+  const previousModel = process.env.AI_MODEL;
+  const previousFetch = globalThis.fetch;
+  let url;
+  let options;
+  process.env.AI_API_KEY = "test-gemini-key";
+  process.env.AI_PROVIDER = "gemini";
+  process.env.AI_MODEL = "gemini-2.5-flash";
+  globalThis.fetch = async (requestUrl, requestOptions) => {
+    url = String(requestUrl);
+    options = requestOptions;
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: "A Gemini plan", sections: [{ title: "Indoor air", items: [{ action: "Use a cleaner room", why: "Reduce indoor sources", impact: "May lower exposure" }] }] }) }] } }] }), { status: 200 });
+  };
+  try {
+    const response = await POST(request({ action: "plan", profile }));
+    const result = await response.json();
+    const sent = JSON.parse(options.body);
+    assert.equal(response.status, 200);
+    assert.equal(result.source, "ai");
+    assert.equal(result.plan.summary, "A Gemini plan");
+    assert.match(url, /generativelanguage\.googleapis\.com\/v1beta\/models\/gemini-2\.5-flash:generateContent$/);
+    assert.equal(new URL(url).search, "");
+    assert.equal(options.headers["x-goog-api-key"], "test-gemini-key");
+    assert.match(sent.systemInstruction.parts[0].text, /Do not diagnose/);
+    assert.equal(sent.generationConfig.responseMimeType, "application/json");
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.AI_API_KEY;
+    else process.env.AI_API_KEY = previousKey;
+    if (previousProvider === undefined) delete process.env.AI_PROVIDER;
+    else process.env.AI_PROVIDER = previousProvider;
+    if (previousModel === undefined) delete process.env.AI_MODEL;
+    else process.env.AI_MODEL = previousModel;
+  }
+});
+
+test("maps assistant conversation history to Gemini model turns", async () => {
+  const previousKey = process.env.AI_API_KEY;
+  const previousProvider = process.env.AI_PROVIDER;
+  const previousModel = process.env.AI_MODEL;
+  const previousFetch = globalThis.fetch;
+  let sent;
+  process.env.AI_API_KEY = "test-gemini-key";
+  process.env.AI_PROVIDER = "gemini";
+  process.env.AI_MODEL = "gemini-2.5-flash";
+  globalThis.fetch = async (_url, options) => {
+    sent = JSON.parse(options.body);
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "Keep one room cleaner." }] } }] }), { status: 200 });
+  };
+  try {
+    const response = await POST(request({ action: "ask", profile, history: [{ role: "user", content: "We have a child at home." }, { role: "assistant", content: "I will keep that in mind." }], question: "What about the bedroom?" }));
+    const result = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(result.reply, "Keep one room cleaner.");
+    assert.deepEqual(sent.contents.slice(0, 2).map(message => message.role), ["user", "model"]);
+    assert.equal(sent.contents.at(-1).role, "user");
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.AI_API_KEY;
+    else process.env.AI_API_KEY = previousKey;
+    if (previousProvider === undefined) delete process.env.AI_PROVIDER;
+    else process.env.AI_PROVIDER = previousProvider;
+    if (previousModel === undefined) delete process.env.AI_MODEL;
+    else process.env.AI_MODEL = previousModel;
   }
 });
